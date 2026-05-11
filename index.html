@@ -1,5 +1,69 @@
 <!DOCTYPE html>
-<html>
-<head></head>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pomodoro</title>
+  <link data-trunk rel="rust" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100dvh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #1a1a2e;
+      color: #eee;
+      font-family: system-ui, sans-serif;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .phase {
+      font-size: 1.2rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #e94560;
+    }
+
+    .clock {
+      font-size: 6rem;
+      font-variant-numeric: tabular-nums;
+      font-weight: 300;
+      letter-spacing: 0.05em;
+    }
+
+    .controls {
+      display: flex;
+      gap: 0.75rem;
+    }
+
+    button {
+      padding: 0.6rem 1.8rem;
+      border: 2px solid #e94560;
+      border-radius: 999px;
+      background: transparent;
+      color: #eee;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    button:hover { background: #e9456022; }
+    button.primary { background: #e94560; color: #fff; }
+    button.primary:hover { background: #c73850; }
+
+    .completed {
+      font-size: 0.9rem;
+      color: #888;
+    }
+  </style>
+</head>
 <body></body>
 </html>
