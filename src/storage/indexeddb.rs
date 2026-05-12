@@ -82,6 +82,20 @@ impl IndexedDbStorage {
     }
 
     pub async fn complete_session(&self, id: u64, completed_at_ms: i64) -> StorageResult<()> {
+        self.terminate_session(id, |rec| rec.completed_at_ms = Some(completed_at_ms))
+            .await
+    }
+
+    pub async fn abandon_session(&self, id: u64, abandoned_at_ms: i64) -> StorageResult<()> {
+        self.terminate_session(id, |rec| rec.abandoned_at_ms = Some(abandoned_at_ms))
+            .await
+    }
+
+    async fn terminate_session(
+        &self,
+        id: u64,
+        mutate: impl FnOnce(&mut SessionRecord),
+    ) -> StorageResult<()> {
         let tx = self
             .db
             .transaction(&[STORE_SESSIONS], TransactionMode::ReadWrite)?;
@@ -92,31 +106,8 @@ impl IndexedDbStorage {
             .await?
             .ok_or_else(|| StorageError(format!("session {id} not found")))?;
         let mut rec: SessionRecord = from_value(v)?;
-        rec.completed_at_ms = Some(completed_at_ms);
+        mutate(&mut rec);
         store.put(&to_value(&rec)?, Some(&key))?.await?;
-        tx.commit()?.await?;
-        Ok(())
-    }
-
-    /// Deletes the session and all of its pause records.
-    pub async fn delete_session(&self, id: u64) -> StorageResult<()> {
-        let tx = self.db.transaction(
-            &[STORE_SESSIONS, STORE_PAUSES],
-            TransactionMode::ReadWrite,
-        )?;
-        let sessions = tx.object_store(STORE_SESSIONS)?;
-        let pauses = tx.object_store(STORE_PAUSES)?;
-
-        let sid = JsValue::from_f64(id as f64);
-        sessions.delete(sid.clone())?.await?;
-
-        let index = pauses.index(INDEX_PAUSES_BY_SESSION)?;
-        let pause_keys = index
-            .get_all_keys(Some(Query::Key(sid)), None)?
-            .await?;
-        for k in pause_keys {
-            pauses.delete(k)?.await?;
-        }
         tx.commit()?.await?;
         Ok(())
     }
@@ -171,7 +162,7 @@ impl IndexedDbStorage {
         let mut active: Option<(u64, SessionRecord)> = None;
         for (k, v) in s_keys.into_iter().zip(s_values) {
             let rec: SessionRecord = from_value(v)?;
-            if rec.completed_at_ms.is_some() {
+            if !rec.is_active() {
                 continue;
             }
             let id = k.as_f64().unwrap_or(0.0) as u64;

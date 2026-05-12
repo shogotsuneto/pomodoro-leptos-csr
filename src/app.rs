@@ -259,19 +259,36 @@ pub fn App() -> impl IntoView {
         }
     };
 
-    let reset = move |_| {
-        set_is_running.set(false);
-        set_run_version.update(|v| *v += 1);
-        set_seconds_left.set(phase.get_untracked().duration_secs());
+    // "New Work" — abandon any in-flight session (Work or Break) and start a
+    // fresh Work session at 0:00. When idle (no active session), just starts
+    // Work; when in Break, skips it; when in Work, marks the current attempt
+    // as abandoned and begins a new one.
+    let new_work = move |_| {
+        let ver = run_version.get_untracked() + 1;
+        set_run_version.set(ver);
+        set_is_running.set(true);
+        set_phase.set(Phase::Work);
+        set_seconds_left.set(Phase::Work.duration_secs());
+
         spawn_local(async move {
-            if let Some(a) = active.get_value() {
+            if let Some(mut a) = active.get_value() {
+                let now = now_ms();
+                // Close any open pause so the pause history is complete.
+                if let Some((pause_id, _)) = a.open_pause.take() {
+                    if let Some(s) = storage.get_value() {
+                        if let Err(e) = s.end_pause(pause_id, now).await {
+                            log_err("end_pause on new_work failed", e);
+                        }
+                    }
+                }
                 if let Some(s) = storage.get_value() {
-                    if let Err(e) = s.delete_session(a.session_id).await {
-                        log_err("delete on reset failed", e);
+                    if let Err(e) = s.abandon_session(a.session_id, now).await {
+                        log_err("abandon session failed", e);
                     }
                 }
                 active.set_value(None);
             }
+            start_fresh_session(storage, active, sigs, Phase::Work, ver).await;
         });
     };
 
@@ -306,7 +323,7 @@ pub fn App() -> impl IntoView {
                 >
                     {move || if is_running.get() { "Pause" } else { "Start" }}
                 </button>
-                <button on:click=reset>"Reset"</button>
+                <button on:click=new_work>"New Work"</button>
             </div>
             <p class="completed">"Completed: " {completed}</p>
             <label class="option">
