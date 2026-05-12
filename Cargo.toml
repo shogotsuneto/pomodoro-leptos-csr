@@ -22,5 +22,6 @@ features = [
   "GainNode",
   "OscillatorNode",
   "OscillatorType",
+  "HtmlInputElement",
   "console",
 ]

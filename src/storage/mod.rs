@@ -87,6 +87,13 @@ impl ActiveSession {
     }
 }
 
+/// User-configurable preferences. Persisted as a singleton record in the
+/// `settings` object store.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Settings {
+    pub auto_start_next: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PhaseKind {
     Work,

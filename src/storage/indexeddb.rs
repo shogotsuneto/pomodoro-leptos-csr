@@ -5,15 +5,18 @@ use serde_wasm_bindgen::{from_value, to_value};
 use wasm_bindgen::JsValue;
 
 use super::{
-    ActiveSession, PauseRecord, PhaseKind, SessionRecord, StorageError, StorageResult,
+    ActiveSession, PauseRecord, PhaseKind, SessionRecord, Settings, StorageError, StorageResult,
 };
 
 const DB_NAME: &str = "pomodoro";
 // Bump this when the schema changes and extend `on_upgrade_needed` accordingly.
-const DB_VERSION: u32 = 3;
+const DB_VERSION: u32 = 4;
 const STORE_SESSIONS: &str = "sessions";
 const STORE_PAUSES: &str = "pauses";
+const STORE_SETTINGS: &str = "settings";
 const INDEX_PAUSES_BY_SESSION: &str = "by_session";
+// `settings` is a singleton store keyed by this fixed value.
+const SETTINGS_KEY: f64 = 1.0;
 
 pub struct IndexedDbStorage {
     db: Database,
@@ -24,34 +27,42 @@ impl IndexedDbStorage {
         let factory = Factory::new()?;
         let mut req = factory.open(DB_NAME, Some(DB_VERSION))?;
 
-        // Runs on first open and on every version bump. For a real migration
-        // later, branch on `event.old_version()`. For now we just rebuild.
+        // Runs on first open and on every version bump. Idempotent — only
+        // creates stores that don't already exist, so users upgrading keep
+        // their session/pause history. For a real schema change later,
+        // branch on `event.old_version()`.
         req.on_upgrade_needed(|event| {
             let db = event.database().expect("database in upgrade event");
-            for store in [STORE_SESSIONS, STORE_PAUSES] {
-                if db.store_names().iter().any(|n| n == store) {
-                    db.delete_object_store(store)
-                        .expect("drop old object store");
-                }
+            let existing = db.store_names();
+            let has = |n: &str| existing.iter().any(|s| s == n);
+
+            if !has(STORE_SESSIONS) {
+                let mut params = ObjectStoreParams::new();
+                params.auto_increment(true);
+                db.create_object_store(STORE_SESSIONS, params)
+                    .expect("create sessions store");
             }
 
-            let mut params = ObjectStoreParams::new();
-            params.auto_increment(true);
-            db.create_object_store(STORE_SESSIONS, params)
-                .expect("create sessions store");
+            if !has(STORE_PAUSES) {
+                let mut params = ObjectStoreParams::new();
+                params.auto_increment(true);
+                let pauses = db
+                    .create_object_store(STORE_PAUSES, params)
+                    .expect("create pauses store");
+                pauses
+                    .create_index(
+                        INDEX_PAUSES_BY_SESSION,
+                        KeyPath::new_single("session_id"),
+                        None,
+                    )
+                    .expect("create pauses index");
+            }
 
-            let mut params = ObjectStoreParams::new();
-            params.auto_increment(true);
-            let pauses = db
-                .create_object_store(STORE_PAUSES, params)
-                .expect("create pauses store");
-            pauses
-                .create_index(
-                    INDEX_PAUSES_BY_SESSION,
-                    KeyPath::new_single("session_id"),
-                    None,
-                )
-                .expect("create pauses index");
+            if !has(STORE_SETTINGS) {
+                let params = ObjectStoreParams::new();
+                db.create_object_store(STORE_SETTINGS, params)
+                    .expect("create settings store");
+            }
         });
 
         let db = req.await?;
@@ -206,6 +217,31 @@ impl IndexedDbStorage {
             closed_paused_ms,
             open_pause,
         }))
+    }
+
+    // -- settings -----------------------------------------------------------
+
+    pub async fn load_settings(&self) -> StorageResult<Settings> {
+        let tx = self
+            .db
+            .transaction(&[STORE_SETTINGS], TransactionMode::ReadOnly)?;
+        let store = tx.object_store(STORE_SETTINGS)?;
+        let key = JsValue::from_f64(SETTINGS_KEY);
+        match store.get(key)?.await? {
+            Some(v) => Ok(from_value(v)?),
+            None => Ok(Settings::default()),
+        }
+    }
+
+    pub async fn save_settings(&self, settings: &Settings) -> StorageResult<()> {
+        let tx = self
+            .db
+            .transaction(&[STORE_SETTINGS], TransactionMode::ReadWrite)?;
+        let store = tx.object_store(STORE_SETTINGS)?;
+        let key = JsValue::from_f64(SETTINGS_KEY);
+        store.put(&to_value(settings)?, Some(&key))?.await?;
+        tx.commit()?.await?;
+        Ok(())
     }
 
     pub async fn completed_work_count(&self) -> StorageResult<u32> {

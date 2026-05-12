@@ -8,7 +8,7 @@ use wasm_bindgen::JsValue;
 use web_sys::{AudioContext, OscillatorType};
 
 use crate::storage::indexeddb::IndexedDbStorage;
-use crate::storage::{ActiveSession, PhaseKind, SessionRecord};
+use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings};
 use crate::timer::Phase;
 
 type StorageRef = StoredValue<Option<Rc<IndexedDbStorage>>, LocalStorage>;
@@ -52,6 +52,32 @@ struct Signals {
     is_running: WriteSignal<bool>,
     run_version: ReadSignal<u32>,
     set_run_version: WriteSignal<u32>,
+    auto_start_next: ReadSignal<bool>,
+}
+
+/// Inserts a fresh session for `phase`, sets it as active, then runs the
+/// tick loop until pause / reset / completion.
+async fn start_fresh_session(
+    storage: StorageRef,
+    active: ActiveRef,
+    sigs: Signals,
+    phase: Phase,
+    ver: u32,
+) {
+    let now = now_ms();
+    let rec = SessionRecord::new(phase.into(), now, phase.duration_secs());
+    let id = match storage.get_value() {
+        Some(s) => match s.start_session(&rec).await {
+            Ok(id) => id,
+            Err(e) => {
+                log_err("start_session failed", e);
+                0
+            }
+        },
+        None => 0,
+    };
+    active.set_value(Some(ActiveSession::fresh(id, rec)));
+    run_tick_loop(storage, active, sigs, ver).await;
 }
 
 async fn finalize_completion(
@@ -60,13 +86,12 @@ async fn finalize_completion(
     sigs: Signals,
     completed_at_ms: i64,
 ) {
-    let Some(mut a) = active.get_value() else { return };
+    let Some(a) = active.get_value() else { return };
     if let Some(s) = storage.get_value() {
         if let Err(e) = s.complete_session(a.session_id, completed_at_ms).await {
             log_err("complete session failed", e);
         }
     }
-    a.session.completed_at_ms = Some(completed_at_ms);
 
     beep(880.0, 600.0);
     if a.session.phase == PhaseKind::Work {
@@ -75,9 +100,20 @@ async fn finalize_completion(
     let next = Phase::from(a.session.phase).next();
     sigs.set_phase.set(next);
     sigs.seconds_left.set(next.duration_secs());
-    sigs.is_running.set(false);
     active.set_value(None);
-    sigs.set_run_version.update(|v| *v += 1);
+
+    if sigs.auto_start_next.get_untracked() {
+        // Roll straight into the next phase. Spawn a separate task so this
+        // one (and the tick loop above it) can unwind cleanly first.
+        let ver = sigs.run_version.get_untracked() + 1;
+        sigs.set_run_version.set(ver);
+        spawn_local(async move {
+            start_fresh_session(storage, active, sigs, next, ver).await;
+        });
+    } else {
+        sigs.is_running.set(false);
+        sigs.set_run_version.update(|v| *v += 1);
+    }
 }
 
 /// Ticks once per second, recomputing remaining time from wall clock so the
@@ -105,6 +141,7 @@ pub fn App() -> impl IntoView {
     let (phase, set_phase) = signal(Phase::Work);
     let (completed, set_completed) = signal(0u32);
     let (run_version, set_run_version) = signal(0u32);
+    let (auto_start_next, set_auto_start_next) = signal(false);
 
     let storage: StorageRef = StoredValue::new_local(None);
     let active: ActiveRef = StoredValue::new_local(None);
@@ -116,6 +153,7 @@ pub fn App() -> impl IntoView {
         is_running: set_is_running,
         run_version,
         set_run_version,
+        auto_start_next,
     };
 
     // Init: open DB, load count, restore any active session.
@@ -128,6 +166,11 @@ pub fn App() -> impl IntoView {
             }
         };
         storage.set_value(Some(s.clone()));
+
+        match s.load_settings().await {
+            Ok(settings) => set_auto_start_next.set(settings.auto_start_next),
+            Err(e) => log_err("load settings failed", e),
+        }
 
         match s.completed_work_count().await {
             Ok(c) => set_completed.set(c),
@@ -196,37 +239,22 @@ pub fn App() -> impl IntoView {
             set_run_version.set(ver);
             set_is_running.set(true);
             spawn_local(async move {
-                let now = now_ms();
-                let next = match active.get_value() {
-                    Some(mut a) => {
-                        if let Some((pause_id, paused_at)) = a.open_pause.take() {
-                            if let Some(s) = storage.get_value() {
-                                if let Err(e) = s.end_pause(pause_id, now).await {
-                                    log_err("end_pause failed", e);
-                                }
+                if let Some(mut a) = active.get_value() {
+                    let now = now_ms();
+                    if let Some((pause_id, paused_at)) = a.open_pause.take() {
+                        if let Some(s) = storage.get_value() {
+                            if let Err(e) = s.end_pause(pause_id, now).await {
+                                log_err("end_pause failed", e);
                             }
-                            a.closed_paused_ms += (now - paused_at).max(0);
                         }
-                        Some(a)
+                        a.closed_paused_ms += (now - paused_at).max(0);
                     }
-                    None => {
-                        let p = phase.get_untracked();
-                        let rec = SessionRecord::new(p.into(), now, p.duration_secs());
-                        let id = match storage.get_value() {
-                            Some(s) => match s.start_session(&rec).await {
-                                Ok(id) => id,
-                                Err(e) => {
-                                    log_err("start_session failed", e);
-                                    0
-                                }
-                            },
-                            None => 0,
-                        };
-                        Some(ActiveSession::fresh(id, rec))
-                    }
-                };
-                active.set_value(next);
-                run_tick_loop(storage, active, sigs, ver).await;
+                    active.set_value(Some(a));
+                    run_tick_loop(storage, active, sigs, ver).await;
+                } else {
+                    let p = phase.get_untracked();
+                    start_fresh_session(storage, active, sigs, p, ver).await;
+                }
             });
         }
     };
@@ -243,6 +271,21 @@ pub fn App() -> impl IntoView {
                     }
                 }
                 active.set_value(None);
+            }
+        });
+    };
+
+    let on_auto_start_toggle = move |ev: leptos::ev::Event| {
+        let checked = event_target_checked(&ev);
+        set_auto_start_next.set(checked);
+        spawn_local(async move {
+            if let Some(s) = storage.get_value() {
+                let settings = Settings {
+                    auto_start_next: checked,
+                };
+                if let Err(e) = s.save_settings(&settings).await {
+                    log_err("save settings failed", e);
+                }
             }
         });
     };
@@ -266,6 +309,14 @@ pub fn App() -> impl IntoView {
                 <button on:click=reset>"Reset"</button>
             </div>
             <p class="completed">"Completed: " {completed}</p>
+            <label class="option">
+                <input
+                    type="checkbox"
+                    prop:checked=move || auto_start_next.get()
+                    on:change=on_auto_start_toggle
+                />
+                "Auto-start next session"
+            </label>
         </div>
     }
 }
