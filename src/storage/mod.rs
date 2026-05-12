@@ -12,15 +12,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::timer::Phase;
 
-/// One Work or Break attempt. Created on Start, mutated only at completion.
-/// All pause/resume events live in the separate `PauseRecord` store, keyed
-/// back here by `session_id`.
+/// One Work or Break attempt. Created on Start; mutated only at the terminal
+/// transition (natural completion or user abandonment). All pause/resume
+/// events live in the separate `PauseRecord` store, keyed back here by
+/// `session_id`.
+///
+/// Terminal state is mutually exclusive: at most one of `completed_at_ms`
+/// or `abandoned_at_ms` is `Some`. Both `None` means the session is still
+/// active (running or paused).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
     pub phase: PhaseKind,
     pub started_at_ms: i64,
     pub duration_secs: u32,
     pub completed_at_ms: Option<i64>,
+    /// Set when the user explicitly bailed out (e.g., hit "New Work" mid-Work
+    /// or skipped a Break). Distinct from completion so analytics can tell
+    /// them apart. `#[serde(default)]` keeps old records (without this field)
+    /// loadable.
+    #[serde(default)]
+    pub abandoned_at_ms: Option<i64>,
 }
 
 impl SessionRecord {
@@ -30,7 +41,12 @@ impl SessionRecord {
             started_at_ms,
             duration_secs,
             completed_at_ms: None,
+            abandoned_at_ms: None,
         }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.completed_at_ms.is_none() && self.abandoned_at_ms.is_none()
     }
 }
 
@@ -85,6 +101,13 @@ impl ActiveSession {
     pub fn is_paused(&self) -> bool {
         self.open_pause.is_some()
     }
+}
+
+/// User-configurable preferences. Persisted as a singleton record in the
+/// `settings` object store.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Settings {
+    pub auto_start_next: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
