@@ -1029,6 +1029,8 @@ dependencies = [
  "console_error_panic_hook",
  "gloo-timers",
  "leptos",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]

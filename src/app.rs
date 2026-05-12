@@ -1,8 +1,39 @@
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use wasm_bindgen::JsValue;
+use web_sys::{AudioContext, OscillatorType};
 
 use crate::timer::Phase;
+
+fn beep(frequency: f32, duration_ms: f64) {
+    let Ok(ctx) = AudioContext::new() else { return };
+
+    let Ok(oscillator) = ctx.create_oscillator() else { return };
+    let Ok(gain) = ctx.create_gain() else { return };
+
+    oscillator.set_type(OscillatorType::Sine);
+    oscillator.frequency().set_value(frequency);
+
+    gain.gain().set_value(0.4);
+
+    let _ = oscillator.connect_with_audio_node(&gain);
+    let _ = gain.connect_with_audio_node(&ctx.destination());
+
+    let now = ctx.current_time();
+    oscillator.start().ok();
+
+    // Fade out just before stopping to avoid a click.
+    gain.gain()
+        .exponential_ramp_to_value_at_time(0.001, now + duration_ms / 1000.0)
+        .ok();
+    oscillator
+        .stop_with_when(now + duration_ms / 1000.0)
+        .ok();
+
+    // Keep ctx alive until the sound finishes by leaking it into JS.
+    let _ = JsValue::from(ctx);
+}
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -38,7 +69,8 @@ pub fn App() -> impl IntoView {
                     }
 
                     if seconds_left.get_untracked() == 0 {
-                        // Phase complete: advance and wait for user to start next phase.
+                        // Phase complete: play a beep then advance.
+                        beep(880.0, 600.0);
                         let current = phase.get_untracked();
                         if current == Phase::Work {
                             set_completed.update(|c| *c += 1);
