@@ -1,10 +1,23 @@
+use std::rc::Rc;
+
 use gloo_timers::future::TimeoutFuture;
 use leptos::prelude::*;
+use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
 use wasm_bindgen::JsValue;
 use web_sys::{AudioContext, OscillatorType};
 
+use crate::storage::indexeddb::IndexedDbStorage;
+use crate::storage::SessionRecord;
 use crate::timer::Phase;
+
+fn now_ms() -> i64 {
+    js_sys::Date::now() as i64
+}
+
+fn log_err(prefix: &str, e: impl std::fmt::Display) {
+    web_sys::console::error_1(&format!("{prefix}: {e}").into());
+}
 
 fn beep(frequency: f32, duration_ms: f64) {
     let Ok(ctx) = AudioContext::new() else { return };
@@ -43,6 +56,26 @@ pub fn App() -> impl IntoView {
     let (completed, set_completed) = signal(0u32);
     // Incrementing this cancels the running async tick loop.
     let (run_version, set_run_version) = signal(0u32);
+    // When the current phase first began counting down (preserved across pause/resume).
+    let (phase_started_at, set_phase_started_at) = signal::<Option<i64>>(None);
+
+    // Storage handle is set once IndexedDB finishes opening. Reads/writes
+    // before that point are simply skipped — the UI still works without it.
+    let storage: StoredValue<Option<Rc<IndexedDbStorage>>, LocalStorage> =
+        StoredValue::new_local(None);
+
+    spawn_local(async move {
+        match IndexedDbStorage::open().await {
+            Ok(s) => {
+                match s.completed_work_count().await {
+                    Ok(c) => set_completed.set(c),
+                    Err(e) => log_err("load count failed", e),
+                }
+                storage.set_value(Some(Rc::new(s)));
+            }
+            Err(e) => log_err("storage init failed", e),
+        }
+    });
 
     let display = move || {
         let s = seconds_left.get();
@@ -58,6 +91,9 @@ pub fn App() -> impl IntoView {
             let ver = run_version.get_untracked() + 1;
             set_run_version.set(ver);
             set_is_running.set(true);
+            if phase_started_at.get_untracked().is_none() {
+                set_phase_started_at.set(Some(now_ms()));
+            }
 
             spawn_local(async move {
                 loop {
@@ -72,12 +108,29 @@ pub fn App() -> impl IntoView {
                         // Phase complete: play a beep then advance.
                         beep(880.0, 600.0);
                         let current = phase.get_untracked();
+                        let started_at =
+                            phase_started_at.get_untracked().unwrap_or_else(now_ms);
+
+                        if let Some(s) = storage.get_value() {
+                            let rec = SessionRecord {
+                                phase: current.into(),
+                                started_at_ms: started_at,
+                                duration_secs: current.duration_secs(),
+                            };
+                            spawn_local(async move {
+                                if let Err(e) = s.add_session(&rec).await {
+                                    log_err("save session failed", e);
+                                }
+                            });
+                        }
+
                         if current == Phase::Work {
                             set_completed.update(|c| *c += 1);
                         }
                         let next = current.next();
                         set_phase.set(next);
                         set_seconds_left.set(next.duration_secs());
+                        set_phase_started_at.set(None);
                         set_is_running.set(false);
                         set_run_version.update(|v| *v += 1);
                         break;
@@ -93,6 +146,7 @@ pub fn App() -> impl IntoView {
         set_is_running.set(false);
         set_run_version.update(|v| *v += 1);
         set_seconds_left.set(phase.get_untracked().duration_secs());
+        set_phase_started_at.set(None);
     };
 
     view! {
