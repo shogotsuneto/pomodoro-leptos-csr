@@ -1,46 +1,26 @@
 use std::rc::Rc;
 
 use gloo_timers::future::TimeoutFuture;
+use leptos::callback::Callback;
 use leptos::prelude::*;
 use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
-use wasm_bindgen::JsValue;
-use web_sys::{AudioContext, OscillatorType};
 
+use crate::settings_panel::SettingsPanel;
 use crate::storage::indexeddb::IndexedDbStorage;
 use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings};
 use crate::timer::Phase;
+use crate::util::{beep, log_err, now_ms};
 
 type StorageRef = StoredValue<Option<Rc<IndexedDbStorage>>, LocalStorage>;
 type ActiveRef = StoredValue<Option<ActiveSession>, LocalStorage>;
 
-fn now_ms() -> i64 {
-    js_sys::Date::now() as i64
-}
-
-fn log_err(prefix: &str, e: impl std::fmt::Display) {
-    web_sys::console::error_1(&format!("{prefix}: {e}").into());
-}
-
-fn beep(frequency: f32, duration_ms: f64) {
-    let Ok(ctx) = AudioContext::new() else { return };
-    let Ok(oscillator) = ctx.create_oscillator() else { return };
-    let Ok(gain) = ctx.create_gain() else { return };
-
-    oscillator.set_type(OscillatorType::Sine);
-    oscillator.frequency().set_value(frequency);
-    gain.gain().set_value(0.4);
-
-    let _ = oscillator.connect_with_audio_node(&gain);
-    let _ = gain.connect_with_audio_node(&ctx.destination());
-
-    let now = ctx.current_time();
-    oscillator.start().ok();
-    gain.gain()
-        .exponential_ramp_to_value_at_time(0.001, now + duration_ms / 1000.0)
-        .ok();
-    oscillator.stop_with_when(now + duration_ms / 1000.0).ok();
-    let _ = JsValue::from(ctx);
+/// Identifies which side panel is currently shown. `None` = none open. Adding
+/// future panels (history, stats, ...) is a matter of extending this enum and
+/// rendering another `*Panel` component in `App`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DrawerKind {
+    Settings,
 }
 
 /// UI write/read signals bundled together for the async helpers.
@@ -52,11 +32,9 @@ struct Signals {
     is_running: WriteSignal<bool>,
     run_version: ReadSignal<u32>,
     set_run_version: WriteSignal<u32>,
-    auto_start_next: ReadSignal<bool>,
+    settings: ReadSignal<Settings>,
 }
 
-/// Inserts a fresh session for `phase`, sets it as active, then runs the
-/// tick loop until pause / reset / completion.
 async fn start_fresh_session(
     storage: StorageRef,
     active: ActiveRef,
@@ -65,7 +43,9 @@ async fn start_fresh_session(
     ver: u32,
 ) {
     let now = now_ms();
-    let rec = SessionRecord::new(phase.into(), now, phase.duration_secs());
+    let pk: PhaseKind = phase.into();
+    let dur = sigs.settings.get_untracked().duration_secs(pk);
+    let rec = SessionRecord::new(pk, now, dur);
     let id = match storage.get_value() {
         Some(s) => match s.start_session(&rec).await {
             Ok(id) => id,
@@ -93,18 +73,17 @@ async fn finalize_completion(
         }
     }
 
-    beep(880.0, 600.0);
+    let settings = sigs.settings.get_untracked();
+    beep(880.0, 600.0, settings.beep_volume);
     if a.session.phase == PhaseKind::Work {
         sigs.completed.update(|c| *c += 1);
     }
     let next = Phase::from(a.session.phase).next();
     sigs.set_phase.set(next);
-    sigs.seconds_left.set(next.duration_secs());
+    sigs.seconds_left.set(settings.duration_secs(next.into()));
     active.set_value(None);
 
-    if sigs.auto_start_next.get_untracked() {
-        // Roll straight into the next phase. Spawn a separate task so this
-        // one (and the tick loop above it) can unwind cleanly first.
+    if settings.auto_start_next {
         let ver = sigs.run_version.get_untracked() + 1;
         sigs.set_run_version.set(ver);
         spawn_local(async move {
@@ -116,8 +95,6 @@ async fn finalize_completion(
     }
 }
 
-/// Ticks once per second, recomputing remaining time from wall clock so the
-/// display stays correct across timer throttling and OS sleep.
 async fn run_tick_loop(storage: StorageRef, active: ActiveRef, sigs: Signals, ver: u32) {
     loop {
         if sigs.run_version.get_untracked() != ver {
@@ -136,12 +113,14 @@ async fn run_tick_loop(storage: StorageRef, active: ActiveRef, sigs: Signals, ve
 
 #[component]
 pub fn App() -> impl IntoView {
-    let (seconds_left, set_seconds_left) = signal(Phase::Work.duration_secs());
+    let initial = Settings::default();
+    let (seconds_left, set_seconds_left) = signal(initial.duration_secs(PhaseKind::Work));
     let (is_running, set_is_running) = signal(false);
     let (phase, set_phase) = signal(Phase::Work);
     let (completed, set_completed) = signal(0u32);
     let (run_version, set_run_version) = signal(0u32);
-    let (auto_start_next, set_auto_start_next) = signal(false);
+    let (settings, set_settings) = signal(initial);
+    let (drawer, set_drawer) = signal::<Option<DrawerKind>>(None);
 
     let storage: StorageRef = StoredValue::new_local(None);
     let active: ActiveRef = StoredValue::new_local(None);
@@ -153,10 +132,22 @@ pub fn App() -> impl IntoView {
         is_running: set_is_running,
         run_version,
         set_run_version,
-        auto_start_next,
+        settings,
     };
 
-    // Init: open DB, load count, restore any active session.
+    // When settings or phase change while no timer is in flight, reflect the
+    // new configured duration in the display. During a running/paused session
+    // the tick loop owns `seconds_left`, and changing settings mid-session
+    // doesn't retroactively alter the active SessionRecord's duration.
+    Effect::new(move || {
+        let s = settings.get();
+        let p = phase.get();
+        if active.get_value().is_none() && !is_running.get_untracked() {
+            set_seconds_left.set(s.duration_secs(p.into()));
+        }
+    });
+
+    // Init: open DB, load settings + count, restore any active session.
     spawn_local(async move {
         let s = match IndexedDbStorage::open().await {
             Ok(s) => Rc::new(s),
@@ -168,7 +159,7 @@ pub fn App() -> impl IntoView {
         storage.set_value(Some(s.clone()));
 
         match s.load_settings().await {
-            Ok(settings) => set_auto_start_next.set(settings.auto_start_next),
+            Ok(loaded) => set_settings.set(loaded),
             Err(e) => log_err("load settings failed", e),
         }
 
@@ -185,9 +176,6 @@ pub fn App() -> impl IntoView {
                 let remaining = a.remaining_secs(now);
 
                 if remaining == 0 {
-                    // Phase logically ended while the tab was closed. Anchor
-                    // completion to when the timer would have actually hit
-                    // zero, not now — keeps history accurate.
                     let synthetic = a.session.started_at_ms
                         + a.session.duration_secs as i64 * 1000
                         + a.closed_paused_ms;
@@ -214,7 +202,6 @@ pub fn App() -> impl IntoView {
 
     let toggle = move |_| {
         if is_running.get_untracked() {
-            // Pause: open a new PauseRecord.
             set_is_running.set(false);
             set_run_version.update(|v| *v += 1);
             spawn_local(async move {
@@ -234,7 +221,6 @@ pub fn App() -> impl IntoView {
                 active.set_value(Some(a));
             });
         } else {
-            // Start a new session, or close out the open pause and resume.
             let ver = run_version.get_untracked() + 1;
             set_run_version.set(ver);
             set_is_running.set(true);
@@ -259,21 +245,17 @@ pub fn App() -> impl IntoView {
         }
     };
 
-    // "New Work" — abandon any in-flight session (Work or Break) and start a
-    // fresh Work session at 0:00. When idle (no active session), just starts
-    // Work; when in Break, skips it; when in Work, marks the current attempt
-    // as abandoned and begins a new one.
     let new_work = move |_| {
         let ver = run_version.get_untracked() + 1;
         set_run_version.set(ver);
         set_is_running.set(true);
         set_phase.set(Phase::Work);
-        set_seconds_left.set(Phase::Work.duration_secs());
+        let work_dur = settings.get_untracked().duration_secs(PhaseKind::Work);
+        set_seconds_left.set(work_dur);
 
         spawn_local(async move {
             if let Some(mut a) = active.get_value() {
                 let now = now_ms();
-                // Close any open pause so the pause history is complete.
                 if let Some((pause_id, _)) = a.open_pause.take() {
                     if let Some(s) = storage.get_value() {
                         if let Err(e) = s.end_pause(pause_id, now).await {
@@ -292,27 +274,20 @@ pub fn App() -> impl IntoView {
         });
     };
 
-    let on_auto_start_toggle = move |ev: leptos::ev::Event| {
-        let checked = event_target_checked(&ev);
-        set_auto_start_next.set(checked);
-        spawn_local(async move {
-            if let Some(s) = storage.get_value() {
-                let settings = Settings {
-                    auto_start_next: checked,
-                };
-                if let Err(e) = s.save_settings(&settings).await {
-                    log_err("save settings failed", e);
-                }
-            }
-        });
-    };
-
     let display = move || {
         let s = seconds_left.get();
         format!("{:02}:{:02}", s / 60, s % 60)
     };
 
     view! {
+        <button
+            class="icon-btn"
+            on:click=move |_| set_drawer.set(Some(DrawerKind::Settings))
+            aria-label="Settings"
+            title="Settings"
+        >
+            "⚙"
+        </button>
         <div class="container">
             <h1 class="phase">{move || phase.get().label()}</h1>
             <div class="clock">{display}</div>
@@ -326,14 +301,13 @@ pub fn App() -> impl IntoView {
                 <button on:click=new_work>"New Work"</button>
             </div>
             <p class="completed">"Completed: " {completed}</p>
-            <label class="option">
-                <input
-                    type="checkbox"
-                    prop:checked=move || auto_start_next.get()
-                    on:change=on_auto_start_toggle
-                />
-                "Auto-start next session"
-            </label>
         </div>
+        <SettingsPanel
+            is_open=Signal::derive(move || drawer.get() == Some(DrawerKind::Settings))
+            on_close=Callback::new(move |_| set_drawer.set(None))
+            settings=settings
+            set_settings=set_settings
+            storage=storage
+        />
     }
 }

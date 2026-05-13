@@ -105,9 +105,38 @@ impl ActiveSession {
 
 /// User-configurable preferences. Persisted as a singleton record in the
 /// `settings` object store.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+///
+/// `#[serde(default)]` at struct level means: any missing field in a stored
+/// record is filled in from `Settings::default()`. This is how new fields
+/// added in later versions stay backwards-compatible — old records simply
+/// adopt today's defaults for whatever they didn't store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
+    pub work_minutes: u32,
+    pub break_minutes: u32,
+    pub beep_volume: f32,
     pub auto_start_next: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            work_minutes: 25,
+            break_minutes: 5,
+            beep_volume: 0.4,
+            auto_start_next: true,
+        }
+    }
+}
+
+impl Settings {
+    pub fn duration_secs(&self, phase: PhaseKind) -> u32 {
+        match phase {
+            PhaseKind::Work => self.work_minutes.saturating_mul(60),
+            PhaseKind::Break => self.break_minutes.saturating_mul(60),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
