@@ -10,7 +10,7 @@ use crate::settings_panel::SettingsPanel;
 use crate::storage::indexeddb::IndexedDbStorage;
 use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings};
 use crate::timer::Phase;
-use crate::util::{beep, log_err, now_ms};
+use crate::util::{beep, log_err, now_ms, start_of_today_ms};
 
 type StorageRef = StoredValue<Option<Rc<IndexedDbStorage>>, LocalStorage>;
 type ActiveRef = StoredValue<Option<ActiveSession>, LocalStorage>;
@@ -29,6 +29,7 @@ struct Signals {
     seconds_left: WriteSignal<u32>,
     set_phase: WriteSignal<Phase>,
     completed: WriteSignal<u32>,
+    completed_today: WriteSignal<u32>,
     is_running: WriteSignal<bool>,
     run_version: ReadSignal<u32>,
     set_run_version: WriteSignal<u32>,
@@ -77,6 +78,12 @@ async fn finalize_completion(
     beep(880.0, 600.0, settings.beep_volume);
     if a.session.phase == PhaseKind::Work {
         sigs.completed.update(|c| *c += 1);
+        // Only count toward today if the completion timestamp itself is
+        // today — handles stale sessions finalized on app reopen after the
+        // day has rolled over.
+        if completed_at_ms >= start_of_today_ms() {
+            sigs.completed_today.update(|c| *c += 1);
+        }
     }
     let next = Phase::from(a.session.phase).next();
     sigs.set_phase.set(next);
@@ -118,6 +125,7 @@ pub fn App() -> impl IntoView {
     let (is_running, set_is_running) = signal(false);
     let (phase, set_phase) = signal(Phase::Work);
     let (completed, set_completed) = signal(0u32);
+    let (completed_today, set_completed_today) = signal(0u32);
     let (run_version, set_run_version) = signal(0u32);
     let (settings, set_settings) = signal(initial);
     let (drawer, set_drawer) = signal::<Option<DrawerKind>>(None);
@@ -129,6 +137,7 @@ pub fn App() -> impl IntoView {
         seconds_left: set_seconds_left,
         set_phase,
         completed: set_completed,
+        completed_today: set_completed_today,
         is_running: set_is_running,
         run_version,
         set_run_version,
@@ -163,9 +172,12 @@ pub fn App() -> impl IntoView {
             Err(e) => log_err("load settings failed", e),
         }
 
-        match s.completed_work_count().await {
-            Ok(c) => set_completed.set(c),
-            Err(e) => log_err("load count failed", e),
+        match s.completed_work_counts(start_of_today_ms()).await {
+            Ok((total, today)) => {
+                set_completed.set(total);
+                set_completed_today.set(today);
+            }
+            Err(e) => log_err("load counts failed", e),
         }
 
         match s.load_active().await {
@@ -300,7 +312,9 @@ pub fn App() -> impl IntoView {
                 </button>
                 <button on:click=new_work>"New Work"</button>
             </div>
-            <p class="completed">"Completed: " {completed}</p>
+            <p class="completed">
+                "Completed: " {completed_today} " today / " {completed} " total"
+            </p>
         </div>
         <SettingsPanel
             is_open=Signal::derive(move || drawer.get() == Some(DrawerKind::Settings))

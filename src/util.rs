@@ -5,6 +5,17 @@ pub fn now_ms() -> i64 {
     js_sys::Date::now() as i64
 }
 
+/// Unix-ms timestamp of the most recent local-midnight (i.e. the start of
+/// "today" in the user's timezone). Used as the cutoff for daily counters.
+pub fn start_of_today_ms() -> i64 {
+    let d = js_sys::Date::new_0();
+    d.set_hours(0);
+    d.set_minutes(0);
+    d.set_seconds(0);
+    d.set_milliseconds(0);
+    d.get_time() as i64
+}
+
 pub fn log_err(prefix: &str, e: impl std::fmt::Display) {
     web_sys::console::error_1(&format!("{prefix}: {e}").into());
 }

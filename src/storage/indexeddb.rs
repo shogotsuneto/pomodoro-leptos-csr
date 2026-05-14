@@ -235,19 +235,30 @@ impl IndexedDbStorage {
         Ok(())
     }
 
-    pub async fn completed_work_count(&self) -> StorageResult<u32> {
+    /// Returns `(total, since)` counts of naturally-completed Work sessions.
+    /// `since` is the subset whose `completed_at_ms >= since_ms` — pass the
+    /// start of today's local midnight to get a "today" count. Single scan
+    /// to avoid two transactions.
+    pub async fn completed_work_counts(&self, since_ms: i64) -> StorageResult<(u32, u32)> {
         let tx = self
             .db
             .transaction(&[STORE_SESSIONS], TransactionMode::ReadOnly)?;
         let store = tx.object_store(STORE_SESSIONS)?;
         let values = store.get_all(None, None)?.await?;
-        let mut n: u32 = 0;
+        let mut total: u32 = 0;
+        let mut since: u32 = 0;
         for v in values {
             let rec: SessionRecord = from_value(v)?;
-            if rec.phase == PhaseKind::Work && rec.completed_at_ms.is_some() {
-                n += 1;
+            if rec.phase != PhaseKind::Work {
+                continue;
+            }
+            if let Some(at) = rec.completed_at_ms {
+                total += 1;
+                if at >= since_ms {
+                    since += 1;
+                }
             }
         }
-        Ok(n)
+        Ok((total, since))
     }
 }
