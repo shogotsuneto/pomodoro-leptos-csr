@@ -27,6 +27,11 @@ pub fn beep(frequency: f32, duration_ms: f64, volume: f32) {
 
     let now = ctx.current_time();
     oscillator.start().ok();
+    // Exponential fade-out to near-silence right before stopping the
+    // oscillator. Cutting off a still-loud waveform produces an audible
+    // click; exponential (vs linear) tracks how the ear perceives loudness,
+    // so the fade sounds smooth. The target is 0.001 rather than 0.0
+    // because WebAudio's exponential ramps can't cross or reach zero.
     gain.gain()
         .exponential_ramp_to_value_at_time(0.001, now + duration_ms / 1000.0)
         .ok();
