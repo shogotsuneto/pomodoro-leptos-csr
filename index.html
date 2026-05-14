@@ -64,17 +64,109 @@
       color: #888;
     }
 
-    .option {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-size: 0.9rem;
+    .icon-btn {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      background: transparent;
+      border: none;
       color: #aaa;
+      font-size: 1.5rem;
       cursor: pointer;
-      user-select: none;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      z-index: 5;
+      transition: color 0.15s, background 0.15s;
+    }
+    .icon-btn:hover { color: #eee; background: #ffffff14; }
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+      z-index: 10;
+    }
+    .drawer-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
     }
 
-    .option input { cursor: pointer; }
+    .drawer {
+      position: fixed;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: min(360px, 90vw);
+      background: #16213e;
+      border-left: 1px solid #2a2a4a;
+      transform: translateX(100%);
+      transition: transform 0.25s ease;
+      z-index: 11;
+      display: flex;
+      flex-direction: column;
+    }
+    .drawer.open { transform: translateX(0); }
+
+    .drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    .drawer-header h2 {
+      font-size: 1rem;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+    }
+    .drawer-close {
+      background: transparent;
+      border: none;
+      color: #eee;
+      font-size: 1.5rem;
+      cursor: pointer;
+      padding: 0 0.25rem;
+      line-height: 1;
+    }
+    .drawer-close:hover { color: #e94560; background: transparent; }
+
+    .drawer-body {
+      padding: 1.25rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .setting {
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      margin-bottom: 1.25rem;
+    }
+    .setting label {
+      font-size: 0.85rem;
+      color: #ccc;
+    }
+    .setting input[type=number],
+    .setting input[type=range] {
+      width: 100%;
+      padding: 0.45rem 0.6rem;
+      background: #0f1626;
+      border: 1px solid #2a2a4a;
+      border-radius: 4px;
+      color: #eee;
+      font-size: 0.95rem;
+    }
+    .setting input[type=range] { padding: 0; }
+    .setting.row {
+      flex-direction: row;
+      align-items: center;
+      gap: 0.6rem;
+    }
+    .setting.row input[type=checkbox] { cursor: pointer; }
+    .setting.row label { cursor: pointer; }
   </style>
 </head>
 <body></body>
