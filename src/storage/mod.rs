@@ -32,22 +32,45 @@ pub struct SessionRecord {
     /// loadable.
     #[serde(default)]
     pub abandoned_at_ms: Option<i64>,
+    /// Work session may be associated with a Task. Always `None` for Break.
+    /// `#[serde(default)]` keeps pre-tasks records loadable.
+    #[serde(default)]
+    pub task_id: Option<u64>,
 }
 
 impl SessionRecord {
-    pub fn new(phase: PhaseKind, started_at_ms: i64, duration_secs: u32) -> Self {
+    pub fn new(
+        phase: PhaseKind,
+        started_at_ms: i64,
+        duration_secs: u32,
+        task_id: Option<u64>,
+    ) -> Self {
         Self {
             phase,
             started_at_ms,
             duration_secs,
             completed_at_ms: None,
             abandoned_at_ms: None,
+            task_id,
         }
     }
 
     pub fn is_active(&self) -> bool {
         self.completed_at_ms.is_none() && self.abandoned_at_ms.is_none()
     }
+}
+
+/// A user-defined task that Work sessions can be attributed to. Stored in
+/// its own object store; `Settings.selected_task_id` is the currently chosen
+/// one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Task {
+    pub name: String,
+    pub created_at_ms: i64,
+    /// Archived tasks are hidden from the picker but still resolve when an
+    /// older session references them.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 /// One pause interval within a session. `resumed_at_ms` is `None` while the
@@ -117,6 +140,8 @@ pub struct Settings {
     pub break_minutes: u32,
     pub beep_volume: f32,
     pub auto_start_next: bool,
+    /// The task to attribute the next Work session to. `None` means no task.
+    pub selected_task_id: Option<u64>,
 }
 
 impl Default for Settings {
@@ -126,6 +151,7 @@ impl Default for Settings {
             break_minutes: 5,
             beep_volume: 0.4,
             auto_start_next: true,
+            selected_task_id: None,
         }
     }
 }

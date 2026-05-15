@@ -8,7 +8,8 @@ use leptos::task::spawn_local;
 
 use crate::settings_panel::SettingsPanel;
 use crate::storage::indexeddb::IndexedDbStorage;
-use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings};
+use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings, Task};
+use crate::tasks::{TaskPicker, TasksPanel};
 use crate::timer::Phase;
 use crate::util::{beep, log_err, now_ms, start_of_today_ms};
 
@@ -21,6 +22,7 @@ type ActiveRef = StoredValue<Option<ActiveSession>, LocalStorage>;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DrawerKind {
     Settings,
+    Tasks,
 }
 
 /// UI write/read signals bundled together for the async helpers.
@@ -34,6 +36,22 @@ struct Signals {
     run_version: ReadSignal<u32>,
     set_run_version: WriteSignal<u32>,
     settings: ReadSignal<Settings>,
+    /// Mirror of `active.get_value().is_some()` for reactive UI (the picker
+    /// needs to know whether a session is in flight).
+    set_active_present: WriteSignal<bool>,
+    /// Mirror of `active.get_value().and_then(|a| a.session.task_id)` for the
+    /// same reason — used by the picker to detect a mid-session switch.
+    set_active_task_id: WriteSignal<Option<u64>>,
+}
+
+/// Recompute the reactive mirrors of `active`. Call this after every
+/// `active.set_value(..)` so the picker's "applies from next session" hint
+/// stays in sync.
+fn sync_active_ui(active: ActiveRef, sigs: Signals) {
+    let snap = active.get_value();
+    sigs.set_active_present.set(snap.is_some());
+    sigs.set_active_task_id
+        .set(snap.and_then(|a| a.session.task_id));
 }
 
 async fn start_fresh_session(
@@ -45,8 +63,14 @@ async fn start_fresh_session(
 ) {
     let now = now_ms();
     let pk: PhaseKind = phase.into();
-    let dur = sigs.settings.get_untracked().duration_secs(pk);
-    let rec = SessionRecord::new(pk, now, dur);
+    let settings = sigs.settings.get_untracked();
+    let dur = settings.duration_secs(pk);
+    // Only Work sessions are attributed to a task.
+    let task_id = match pk {
+        PhaseKind::Work => settings.selected_task_id,
+        PhaseKind::Break => None,
+    };
+    let rec = SessionRecord::new(pk, now, dur, task_id);
     let id = match storage.get_value() {
         Some(s) => match s.start_session(&rec).await {
             Ok(id) => id,
@@ -58,6 +82,7 @@ async fn start_fresh_session(
         None => 0,
     };
     active.set_value(Some(ActiveSession::fresh(id, rec)));
+    sync_active_ui(active, sigs);
     run_tick_loop(storage, active, sigs, ver).await;
 }
 
@@ -89,6 +114,7 @@ async fn finalize_completion(
     sigs.set_phase.set(next);
     sigs.seconds_left.set(settings.duration_secs(next.into()));
     active.set_value(None);
+    sync_active_ui(active, sigs);
 
     if settings.auto_start_next {
         let ver = sigs.run_version.get_untracked() + 1;
@@ -129,6 +155,9 @@ pub fn App() -> impl IntoView {
     let (run_version, set_run_version) = signal(0u32);
     let (settings, set_settings) = signal(initial);
     let (drawer, set_drawer) = signal::<Option<DrawerKind>>(None);
+    let (tasks, set_tasks) = signal::<Vec<(u64, Task)>>(Vec::new());
+    let (active_present, set_active_present) = signal(false);
+    let (active_task_id, set_active_task_id) = signal::<Option<u64>>(None);
 
     let storage: StorageRef = StoredValue::new_local(None);
     let active: ActiveRef = StoredValue::new_local(None);
@@ -142,6 +171,8 @@ pub fn App() -> impl IntoView {
         run_version,
         set_run_version,
         settings,
+        set_active_present,
+        set_active_task_id,
     };
 
     // When settings or phase change while no timer is in flight, reflect the
@@ -180,6 +211,11 @@ pub fn App() -> impl IntoView {
             Err(e) => log_err("load counts failed", e),
         }
 
+        match s.list_tasks().await {
+            Ok(list) => set_tasks.set(list),
+            Err(e) => log_err("list_tasks failed", e),
+        }
+
         match s.load_active().await {
             Ok(Some(a)) => {
                 let p = Phase::from(a.session.phase);
@@ -192,11 +228,13 @@ pub fn App() -> impl IntoView {
                         + a.session.duration_secs as i64 * 1000
                         + a.closed_paused_ms;
                     active.set_value(Some(a));
+                    sync_active_ui(active, sigs);
                     finalize_completion(storage, active, sigs, synthetic).await;
                 } else {
                     let was_running = !a.is_paused();
                     set_seconds_left.set(remaining);
                     active.set_value(Some(a));
+                    sync_active_ui(active, sigs);
                     if was_running {
                         let ver = run_version.get_untracked() + 1;
                         set_run_version.set(ver);
@@ -231,6 +269,7 @@ pub fn App() -> impl IntoView {
                 };
                 a.open_pause = Some((pause_id, paused_at));
                 active.set_value(Some(a));
+                sync_active_ui(active, sigs);
             });
         } else {
             let ver = run_version.get_untracked() + 1;
@@ -248,6 +287,7 @@ pub fn App() -> impl IntoView {
                         a.closed_paused_ms += (now - paused_at).max(0);
                     }
                     active.set_value(Some(a));
+                    sync_active_ui(active, sigs);
                     run_tick_loop(storage, active, sigs, ver).await;
                 } else {
                     let p = phase.get_untracked();
@@ -281,6 +321,7 @@ pub fn App() -> impl IntoView {
                     }
                 }
                 active.set_value(None);
+                sync_active_ui(active, sigs);
             }
             start_fresh_session(storage, active, sigs, Phase::Work, ver).await;
         });
@@ -292,16 +333,36 @@ pub fn App() -> impl IntoView {
     };
 
     view! {
-        <button
-            class="icon-btn"
-            on:click=move |_| set_drawer.set(Some(DrawerKind::Settings))
-            aria-label="Settings"
-            title="Settings"
-        >
-            "⚙"
-        </button>
+        <div class="top-bar">
+            <button
+                class="icon-btn"
+                on:click=move |_| set_drawer.set(Some(DrawerKind::Tasks))
+                aria-label="Tasks"
+                title="Tasks"
+            >
+                "≡"
+            </button>
+            <button
+                class="icon-btn"
+                on:click=move |_| set_drawer.set(Some(DrawerKind::Settings))
+                aria-label="Settings"
+                title="Settings"
+            >
+                "⚙"
+            </button>
+        </div>
         <div class="container">
             <h1 class="phase">{move || phase.get().label()}</h1>
+            <TaskPicker
+                tasks=tasks
+                set_tasks=set_tasks
+                settings=settings
+                set_settings=set_settings
+                storage=storage
+                has_active_session=active_present.into()
+                active_task_id=active_task_id.into()
+                on_open_manage=Callback::new(move |_| set_drawer.set(Some(DrawerKind::Tasks)))
+            />
             <div class="clock">{display}</div>
             <div class="controls">
                 <button
@@ -321,6 +382,13 @@ pub fn App() -> impl IntoView {
             on_close=Callback::new(move |_| set_drawer.set(None))
             settings=settings
             set_settings=set_settings
+            storage=storage
+        />
+        <TasksPanel
+            is_open=Signal::derive(move || drawer.get() == Some(DrawerKind::Tasks))
+            on_close=Callback::new(move |_| set_drawer.set(None))
+            tasks=tasks
+            set_tasks=set_tasks
             storage=storage
         />
     }
