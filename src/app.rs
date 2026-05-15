@@ -8,8 +8,8 @@ use leptos::task::spawn_local;
 
 use crate::settings_panel::SettingsPanel;
 use crate::storage::indexeddb::IndexedDbStorage;
-use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings, Task};
-use crate::tasks::{TaskPicker, TasksPanel};
+use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings};
+use crate::tasks::{TaskPicker, TaskRow, TasksPanel};
 use crate::timer::Phase;
 use crate::util::{beep, log_err, now_ms, start_of_today_ms};
 
@@ -155,7 +155,7 @@ pub fn App() -> impl IntoView {
     let (run_version, set_run_version) = signal(0u32);
     let (settings, set_settings) = signal(initial);
     let (drawer, set_drawer) = signal::<Option<DrawerKind>>(None);
-    let (tasks, set_tasks) = signal::<Vec<(u64, Task)>>(Vec::new());
+    let (tasks, set_tasks) = signal::<Vec<TaskRow>>(Vec::new());
     let (active_present, set_active_present) = signal(false);
     let (active_task_id, set_active_task_id) = signal::<Option<u64>>(None);
 
@@ -212,7 +212,13 @@ pub fn App() -> impl IntoView {
         }
 
         match s.list_tasks().await {
-            Ok(list) => set_tasks.set(list),
+            Ok(list) => {
+                let rows = list
+                    .into_iter()
+                    .map(|(id, task)| TaskRow::from_loaded(id, task))
+                    .collect();
+                set_tasks.set(rows);
+            }
             Err(e) => log_err("list_tasks failed", e),
         }
 

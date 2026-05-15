@@ -1,6 +1,6 @@
 // Tasks UI: main-screen `TaskPicker` (chip + popover) and the
-// management `TasksPanel` (drawer). Both operate on the same `tasks`
-// signal pair held by `App`; persistence is delegated to `IndexedDbStorage`.
+// management `TasksPanel` (drawer). Both operate on a `Vec<TaskRow>`
+// signal held by `App`; persistence is delegated to `IndexedDbStorage`.
 
 use std::rc::Rc;
 
@@ -17,6 +17,28 @@ use crate::storage::{Settings, Task};
 use crate::util::{log_err, now_ms};
 
 type StorageRef = StoredValue<Option<Rc<IndexedDbStorage>>, LocalStorage>;
+
+/// In-memory view of a Task with its mutable fields as fine-grained signals.
+/// Renaming or archiving an item updates only the affected signal, so the
+/// minimal set of dependent nodes re-renders — no list re-scan needed.
+/// `created_at_ms` lives on the persisted `Task` but isn't surfaced in UI,
+/// so we drop it from the row.
+#[derive(Clone, Copy)]
+pub struct TaskRow {
+    pub id: u64,
+    pub name: RwSignal<String>,
+    pub archived: RwSignal<bool>,
+}
+
+impl TaskRow {
+    pub fn from_loaded(id: u64, task: Task) -> Self {
+        Self {
+            id,
+            name: RwSignal::new(task.name),
+            archived: RwSignal::new(task.archived),
+        }
+    }
+}
 
 fn input_value(ev: &Event) -> Option<String> {
     ev.target()?
@@ -38,8 +60,8 @@ fn persist_settings(storage: StorageRef, set_settings: WriteSignal<Settings>, ne
 
 #[component]
 pub fn TaskPicker(
-    tasks: ReadSignal<Vec<(u64, Task)>>,
-    set_tasks: WriteSignal<Vec<(u64, Task)>>,
+    tasks: ReadSignal<Vec<TaskRow>>,
+    set_tasks: WriteSignal<Vec<TaskRow>>,
     settings: ReadSignal<Settings>,
     set_settings: WriteSignal<Settings>,
     storage: StorageRef,
@@ -78,7 +100,8 @@ pub fn TaskPicker(
             let Some(s) = storage.get_value() else { return };
             match s.create_task(&task).await {
                 Ok(id) => {
-                    set_tasks.update(|v| v.push((id, task)));
+                    let row = TaskRow::from_loaded(id, task);
+                    set_tasks.update(|v| v.push(row));
                     let mut next = settings.get_untracked();
                     next.selected_task_id = Some(id);
                     persist_settings(storage, set_settings, next);
@@ -93,11 +116,13 @@ pub fn TaskPicker(
         let sid = settings.get().selected_task_id;
         match sid {
             None => "No task".to_string(),
+            // Tracks both `tasks` (membership) and the row's `name` signal
+            // (in-place rename), so the chip always shows the current label.
             Some(id) => tasks
                 .get()
                 .iter()
-                .find(|(tid, _)| *tid == id)
-                .map(|(_, t)| t.name.clone())
+                .find(|r| r.id == id)
+                .map(|r| r.name.get())
                 .unwrap_or_else(|| "(unknown task)".to_string()),
         }
     };
@@ -106,7 +131,7 @@ pub fn TaskPicker(
         tasks
             .get()
             .into_iter()
-            .filter(|(_, t)| !t.archived)
+            .filter(|r| !r.archived.get())
             .collect::<Vec<_>>()
     };
 
@@ -141,16 +166,17 @@ pub fn TaskPicker(
                         </li>
                         <For
                             each=active_tasks
-                            key=|(id, _)| *id
-                            children=move |(id, task)| {
-                                let label = task.name.clone();
+                            key=|r| r.id
+                            children=move |row| {
+                                let id = row.id;
+                                let name = row.name;
                                 view! {
                                     <li
                                         class="task-item"
                                         class:selected=move || settings.get().selected_task_id == Some(id)
                                         on:click=move |_| select_task(Some(id))
                                     >
-                                        {label}
+                                        {move || name.get()}
                                     </li>
                                 }
                             }
@@ -198,8 +224,8 @@ pub fn TaskPicker(
 pub fn TasksPanel(
     is_open: Signal<bool>,
     on_close: Callback<()>,
-    tasks: ReadSignal<Vec<(u64, Task)>>,
-    set_tasks: WriteSignal<Vec<(u64, Task)>>,
+    tasks: ReadSignal<Vec<TaskRow>>,
+    set_tasks: WriteSignal<Vec<TaskRow>>,
     storage: StorageRef,
 ) -> impl IntoView {
     // Only one row is editable at a time.
@@ -223,11 +249,9 @@ pub fn TasksPanel(
         if name.is_empty() {
             return;
         }
-        set_tasks.update(|v| {
-            if let Some((_, t)) = v.iter_mut().find(|(tid, _)| *tid == id) {
-                t.name = name.clone();
-            }
-        });
+        if let Some(row) = tasks.get_untracked().iter().find(|r| r.id == id) {
+            row.name.set(name.clone());
+        }
         spawn_local(async move {
             let Some(s) = storage.get_value() else { return };
             if let Err(e) = s.rename_task(id, &name).await {
@@ -237,13 +261,11 @@ pub fn TasksPanel(
     };
 
     let toggle_archive = move |id: u64| {
-        let mut next_state = false;
-        set_tasks.update(|v| {
-            if let Some((_, t)) = v.iter_mut().find(|(tid, _)| *tid == id) {
-                t.archived = !t.archived;
-                next_state = t.archived;
-            }
-        });
+        let Some(row) = tasks.get_untracked().iter().find(|r| r.id == id).copied() else {
+            return;
+        };
+        let next_state = !row.archived.get_untracked();
+        row.archived.set(next_state);
         spawn_local(async move {
             let Some(s) = storage.get_value() else { return };
             if let Err(e) = s.set_task_archived(id, next_state).await {
@@ -266,7 +288,10 @@ pub fn TasksPanel(
         spawn_local(async move {
             let Some(s) = storage.get_value() else { return };
             match s.create_task(&task).await {
-                Ok(id) => set_tasks.update(|v| v.push((id, task))),
+                Ok(id) => {
+                    let row = TaskRow::from_loaded(id, task);
+                    set_tasks.update(|v| v.push(row));
+                }
                 Err(e) => log_err("create_task failed", e),
             }
         });
@@ -303,37 +328,21 @@ pub fn TasksPanel(
                 <ul class="task-manage-list">
                     <For
                         each=move || tasks.get()
-                        key=|(id, _)| *id
-                        children=move |(id, _)| {
-                            // `<For>` keys by id, so an in-place rename keeps
-                            // the same view alive. Read name/archived from the
-                            // tasks signal each render so edits land here, not
-                            // just on screens that re-derive from `tasks` (the
-                            // chip).
-                            let name = move || {
-                                tasks
-                                    .get()
-                                    .iter()
-                                    .find(|(tid, _)| *tid == id)
-                                    .map(|(_, t)| t.name.clone())
-                                    .unwrap_or_default()
-                            };
-                            let archived = move || {
-                                tasks
-                                    .get()
-                                    .iter()
-                                    .find(|(tid, _)| *tid == id)
-                                    .map(|(_, t)| t.archived)
-                                    .unwrap_or(false)
-                            };
+                        key=|r| r.id
+                        children=move |row| {
+                            let id = row.id;
+                            let name = row.name;
+                            let archived = row.archived;
                             let editing = move || editing_id.get() == Some(id);
-
                             view! {
-                                <li class="task-manage-item" class:archived=archived>
+                                <li
+                                    class="task-manage-item"
+                                    class:archived=move || archived.get()
+                                >
                                     <Show
                                         when=editing
                                         fallback=move || view! {
-                                            <span class="task-name">{move || name()}</span>
+                                            <span class="task-name">{move || name.get()}</span>
                                         }
                                     >
                                         <input
@@ -357,11 +366,11 @@ pub fn TasksPanel(
                                     </Show>
                                     <div class="task-actions">
                                         <Show when=move || !editing()>
-                                            <button on:click=move |_| begin_edit(id, name())>
+                                            <button on:click=move |_| begin_edit(id, name.get_untracked())>
                                                 "Edit"
                                             </button>
                                             <button on:click=move |_| toggle_archive(id)>
-                                                {move || if archived() { "Unarchive" } else { "Archive" }}
+                                                {move || if archived.get() { "Unarchive" } else { "Archive" }}
                                             </button>
                                         </Show>
                                     </div>
