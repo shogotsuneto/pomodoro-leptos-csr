@@ -361,7 +361,15 @@ pub fn TasksPanel(
                                                     cancel_edit();
                                                 }
                                             }
-                                            on:blur=move |_| commit_edit()
+                                            // Blur-cancels (clicking the close
+                                            // button, backdrop, or anywhere
+                                            // else fires blur before our
+                                            // on_close runs, so committing
+                                            // here would save the in-progress
+                                            // rename against the user's
+                                            // intent). Enter is the only
+                                            // explicit commit.
+                                            on:blur=move |_| cancel_edit()
                                         />
                                     </Show>
                                     <div class="task-actions">
