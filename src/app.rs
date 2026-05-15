@@ -102,12 +102,18 @@ async fn finalize_completion(
     let settings = sigs.settings.get_untracked();
     beep(880.0, 600.0, settings.beep_volume);
     if a.session.phase == PhaseKind::Work {
-        sigs.completed.update(|c| *c += 1);
-        // Only count toward today if the completion timestamp itself is
-        // today — handles stale sessions finalized on app reopen after the
-        // day has rolled over.
-        if completed_at_ms >= start_of_today_ms() {
-            sigs.completed_today.update(|c| *c += 1);
+        // Recompute from storage instead of incrementing locally. Keeps the
+        // "today" bucket correct when the app stays open across midnight
+        // (the local counter has no idea the day rolled over) and naturally
+        // excludes synthetic completions whose timestamp predates today.
+        if let Some(s) = storage.get_value() {
+            match s.completed_work_counts(start_of_today_ms()).await {
+                Ok((total, today)) => {
+                    sigs.completed.set(total);
+                    sigs.completed_today.set(today);
+                }
+                Err(e) => log_err("recount completed failed", e),
+            }
         }
     }
     let next = Phase::from(a.session.phase).next();
