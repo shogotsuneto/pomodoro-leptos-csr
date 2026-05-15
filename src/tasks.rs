@@ -304,20 +304,36 @@ pub fn TasksPanel(
                     <For
                         each=move || tasks.get()
                         key=|(id, _)| *id
-                        children=move |(id, task)| {
-                            let archived = task.archived;
-                            let initial_name = task.name.clone();
+                        children=move |(id, _)| {
+                            // `<For>` keys by id, so an in-place rename keeps
+                            // the same view alive. Read name/archived from the
+                            // tasks signal each render so edits land here, not
+                            // just on screens that re-derive from `tasks` (the
+                            // chip).
+                            let name = move || {
+                                tasks
+                                    .get()
+                                    .iter()
+                                    .find(|(tid, _)| *tid == id)
+                                    .map(|(_, t)| t.name.clone())
+                                    .unwrap_or_default()
+                            };
+                            let archived = move || {
+                                tasks
+                                    .get()
+                                    .iter()
+                                    .find(|(tid, _)| *tid == id)
+                                    .map(|(_, t)| t.archived)
+                                    .unwrap_or(false)
+                            };
                             let editing = move || editing_id.get() == Some(id);
 
-                            let label = initial_name.clone();
-                            let begin_label = initial_name.clone();
                             view! {
-                                <li class="task-manage-item" class:archived=move || archived>
+                                <li class="task-manage-item" class:archived=archived>
                                     <Show
                                         when=editing
-                                        fallback=move || {
-                                            let l = label.clone();
-                                            view! { <span class="task-name">{l}</span> }
+                                        fallback=move || view! {
+                                            <span class="task-name">{move || name()}</span>
                                         }
                                     >
                                         <input
@@ -341,12 +357,11 @@ pub fn TasksPanel(
                                     </Show>
                                     <div class="task-actions">
                                         <Show when=move || !editing()>
-                                            <button on:click={
-                                                let n = begin_label.clone();
-                                                move |_| begin_edit(id, n.clone())
-                                            }>"Edit"</button>
+                                            <button on:click=move |_| begin_edit(id, name())>
+                                                "Edit"
+                                            </button>
                                             <button on:click=move |_| toggle_archive(id)>
-                                                {move || if archived { "Unarchive" } else { "Archive" }}
+                                                {move || if archived() { "Unarchive" } else { "Archive" }}
                                             </button>
                                         </Show>
                                     </div>
