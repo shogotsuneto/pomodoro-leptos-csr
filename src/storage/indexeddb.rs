@@ -6,14 +6,16 @@ use wasm_bindgen::JsValue;
 
 use super::{
     ActiveSession, PauseRecord, PhaseKind, SessionRecord, Settings, StorageError, StorageResult,
+    Task,
 };
 
 const DB_NAME: &str = "pomodoro";
 // Bump this when the schema changes and extend `on_upgrade_needed` accordingly.
-const DB_VERSION: u32 = 4;
+const DB_VERSION: u32 = 5;
 const STORE_SESSIONS: &str = "sessions";
 const STORE_PAUSES: &str = "pauses";
 const STORE_SETTINGS: &str = "settings";
+const STORE_TASKS: &str = "tasks";
 const INDEX_PAUSES_BY_SESSION: &str = "by_session";
 // `settings` is a singleton store keyed by this fixed value.
 const SETTINGS_KEY: f64 = 1.0;
@@ -62,6 +64,13 @@ impl IndexedDbStorage {
                 let params = ObjectStoreParams::new();
                 db.create_object_store(STORE_SETTINGS, params)
                     .expect("create settings store");
+            }
+
+            if !has(STORE_TASKS) {
+                let mut params = ObjectStoreParams::new();
+                params.auto_increment(true);
+                db.create_object_store(STORE_TASKS, params)
+                    .expect("create tasks store");
             }
         });
 
@@ -231,6 +240,60 @@ impl IndexedDbStorage {
         let store = tx.object_store(STORE_SETTINGS)?;
         let key = JsValue::from_f64(SETTINGS_KEY);
         store.put(&to_value(settings)?, Some(&key))?.await?;
+        tx.commit()?.await?;
+        Ok(())
+    }
+
+    // -- tasks --------------------------------------------------------------
+
+    pub async fn create_task(&self, task: &Task) -> StorageResult<u64> {
+        let tx = self
+            .db
+            .transaction(&[STORE_TASKS], TransactionMode::ReadWrite)?;
+        let store = tx.object_store(STORE_TASKS)?;
+        let key = store.add(&to_value(task)?, None)?.await?;
+        tx.commit()?.await?;
+        Ok(key.as_f64().unwrap_or(0.0) as u64)
+    }
+
+    /// Returns all tasks (including archived), paired with their ids.
+    pub async fn list_tasks(&self) -> StorageResult<Vec<(u64, Task)>> {
+        let tx = self
+            .db
+            .transaction(&[STORE_TASKS], TransactionMode::ReadOnly)?;
+        let store = tx.object_store(STORE_TASKS)?;
+        let keys = store.get_all_keys(None, None)?.await?;
+        let values = store.get_all(None, None)?.await?;
+        let mut out = Vec::with_capacity(keys.len());
+        for (k, v) in keys.into_iter().zip(values) {
+            let id = k.as_f64().unwrap_or(0.0) as u64;
+            let task: Task = from_value(v)?;
+            out.push((id, task));
+        }
+        Ok(out)
+    }
+
+    pub async fn rename_task(&self, id: u64, name: &str) -> StorageResult<()> {
+        self.mutate_task(id, |t| t.name = name.to_string()).await
+    }
+
+    pub async fn set_task_archived(&self, id: u64, archived: bool) -> StorageResult<()> {
+        self.mutate_task(id, |t| t.archived = archived).await
+    }
+
+    async fn mutate_task(&self, id: u64, mutate: impl FnOnce(&mut Task)) -> StorageResult<()> {
+        let tx = self
+            .db
+            .transaction(&[STORE_TASKS], TransactionMode::ReadWrite)?;
+        let store = tx.object_store(STORE_TASKS)?;
+        let key = JsValue::from_f64(id as f64);
+        let v = store
+            .get(key.clone())?
+            .await?
+            .ok_or_else(|| StorageError(format!("task {id} not found")))?;
+        let mut task: Task = from_value(v)?;
+        mutate(&mut task);
+        store.put(&to_value(&task)?, Some(&key))?.await?;
         tx.commit()?.await?;
         Ok(())
     }

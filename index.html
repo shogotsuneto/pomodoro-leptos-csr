@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -64,10 +64,15 @@
       color: #888;
     }
 
-    .icon-btn {
+    .top-bar {
       position: fixed;
       top: 1rem;
       right: 1rem;
+      display: flex;
+      gap: 0.25rem;
+      z-index: 5;
+    }
+    .icon-btn {
       background: transparent;
       border: none;
       color: #aaa;
@@ -75,10 +80,164 @@
       cursor: pointer;
       padding: 0.25rem 0.5rem;
       border-radius: 4px;
-      z-index: 5;
       transition: color 0.15s, background 0.15s;
     }
     .icon-btn:hover { color: #eee; background: #ffffff14; }
+
+    /* --- Task picker (main screen) ------------------------------------ */
+    .task-picker {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .task-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.9rem;
+      border: 1px solid #2a2a4a;
+      border-radius: 999px;
+      background: #16213e;
+      color: #aaa;
+      font-size: 0.85rem;
+      cursor: pointer;
+      max-width: 18rem;
+    }
+    .task-chip.has-task { color: #eee; }
+    .task-chip:hover { background: #1f2a4a; }
+    .task-chip-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 14rem;
+    }
+    .task-chip-caret { color: #888; font-size: 0.7rem; }
+    .task-popover-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 15;
+    }
+    .task-popover {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 0.5rem;
+      width: min(280px, 80vw);
+      background: #16213e;
+      border: 1px solid #2a2a4a;
+      border-radius: 8px;
+      padding: 0.5rem;
+      z-index: 20;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+    .task-list {
+      list-style: none;
+      max-height: 220px;
+      overflow-y: auto;
+      margin-bottom: 0.5rem;
+    }
+    .task-item {
+      padding: 0.45rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      color: #ddd;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .task-item:hover { background: #1f2a4a; }
+    .task-item.selected { background: #e9456033; color: #fff; }
+    .task-item.none { color: #888; font-style: italic; }
+    .task-new {
+      display: flex;
+      gap: 0.4rem;
+      margin-bottom: 0.5rem;
+    }
+    .task-new input {
+      flex: 1;
+      padding: 0.4rem 0.6rem;
+      background: #0f1626;
+      border: 1px solid #2a2a4a;
+      border-radius: 4px;
+      color: #eee;
+      font-size: 0.85rem;
+      min-width: 0;
+    }
+    .task-new-btn {
+      padding: 0.4rem 0.75rem;
+      border: 1px solid #2a2a4a;
+      border-radius: 4px;
+      background: transparent;
+      color: #eee;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    .task-new-btn:hover { background: #1f2a4a; }
+    .task-manage {
+      width: 100%;
+      padding: 0.4rem;
+      border: none;
+      border-radius: 4px;
+      background: transparent;
+      color: #888;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .task-manage:hover { color: #ccc; background: #1f2a4a; }
+    .task-hint {
+      font-size: 0.75rem;
+      color: #999;
+      font-style: italic;
+    }
+
+    /* --- Tasks management drawer -------------------------------------- */
+    .task-empty {
+      color: #888;
+      font-size: 0.9rem;
+      text-align: center;
+      padding: 1rem 0;
+    }
+    .task-manage-list { list-style: none; }
+    .task-manage-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    .task-manage-item.archived .task-name {
+      color: #777;
+      text-decoration: line-through;
+    }
+    .task-name {
+      flex: 1;
+      color: #eee;
+      font-size: 0.9rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .task-edit-input {
+      flex: 1;
+      padding: 0.35rem 0.55rem;
+      background: #0f1626;
+      border: 1px solid #2a2a4a;
+      border-radius: 4px;
+      color: #eee;
+      font-size: 0.9rem;
+      min-width: 0;
+    }
+    .task-actions { display: flex; gap: 0.3rem; }
+    .task-actions button {
+      padding: 0.3rem 0.6rem;
+      font-size: 0.75rem;
+      border: 1px solid #2a2a4a;
+      border-radius: 4px;
+    }
 
     .drawer-backdrop {
       position: fixed;

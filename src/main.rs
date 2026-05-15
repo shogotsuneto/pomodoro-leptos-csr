@@ -1,6 +1,7 @@
 mod app;
 mod settings_panel;
 mod storage;
+mod tasks;
 mod timer;
 mod util;
 
