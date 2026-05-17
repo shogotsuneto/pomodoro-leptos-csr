@@ -348,28 +348,32 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class="top-bar">
-            // Each icon has VS-15 (U+FE0E) appended to force text
-            // presentation, so a dual-presentation glyph like ⏱ doesn't
-            // render as a colored emoji on platforms that default to one.
-            // Combined with `font-variant-emoji: text` in CSS for browser
-            // coverage that respects the newer property too.
+            // Glyphs are split into their own span so we can bump only the
+            // icon up a notch (text-font glyphs look small next to a label
+            // at the same size). VS-15 (U+FE0E) on every glyph forces text
+            // (monochrome) presentation, matched by `font-variant-emoji:
+            // text` on the button for browsers that honor the newer
+            // property.
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::History))
             >
-                "⏱\u{FE0E} History"
+                <span class="icon-btn-glyph">"⌚\u{FE0E}"</span>
+                <span class="icon-btn-label">"History"</span>
             </button>
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Tasks))
             >
-                "☑\u{FE0E} Tasks"
+                <span class="icon-btn-glyph">"☑\u{FE0E}"</span>
+                <span class="icon-btn-label">"Tasks"</span>
             </button>
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Settings))
             >
-                "⚙\u{FE0E} Settings"
+                <span class="icon-btn-glyph">"⚙\u{FE0E}"</span>
+                <span class="icon-btn-label">"Settings"</span>
             </button>
         </div>
         <div class="container">
