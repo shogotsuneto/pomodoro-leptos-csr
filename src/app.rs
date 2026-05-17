@@ -358,7 +358,7 @@ pub fn App() -> impl IntoView {
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::History))
             >
-                <span class="icon-btn-glyph">"⌚\u{FE0E}"</span>
+                <span class="icon-btn-glyph">"⏲\u{FE0E}"</span>
                 <span class="icon-btn-label">"History"</span>
             </button>
             <button
