@@ -351,26 +351,20 @@ pub fn App() -> impl IntoView {
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::History))
-                aria-label="History"
-                title="History"
             >
-                "↺"
+                "🕘 History"
             </button>
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Tasks))
-                aria-label="Tasks"
-                title="Tasks"
             >
-                "≡"
+                "☑ Tasks"
             </button>
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Settings))
-                aria-label="Settings"
-                title="Settings"
             >
-                "⚙"
+                "⚙ Settings"
             </button>
         </div>
         <div class="container">
