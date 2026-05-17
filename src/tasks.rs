@@ -5,6 +5,7 @@
 use std::rc::Rc;
 
 use leptos::callback::Callback;
+use leptos::html::Input;
 use leptos::prelude::*;
 use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
@@ -233,6 +234,31 @@ pub fn TasksPanel(
     let (edit_name, set_edit_name) = signal(String::new());
     let (new_name, set_new_name) = signal(String::new());
 
+    // Shared across all rows — only one rename input is mounted at a time
+    // (whichever row's id matches `editing_id`), so the ref always points
+    // at the live one.
+    let input_ref: NodeRef<Input> = NodeRef::new();
+
+    // Auto-focus + select-all when the rename input mounts. Clicking Edit
+    // should feel like immediate text entry, and an unfocused input would
+    // also bypass `on:blur=cancel_edit` — leaving the row stuck in edit
+    // mode if the drawer is closed without ever touching the field.
+    Effect::new(move |_| {
+        if let Some(el) = input_ref.get() {
+            let _ = el.focus();
+            el.select();
+        }
+    });
+
+    // Defensive: closing the drawer always cancels in-progress edits, even
+    // when blur didn't fire (focus moved elsewhere first, or the input
+    // somehow never had focus).
+    Effect::new(move |_| {
+        if !is_open.get() && editing_id.get_untracked().is_some() {
+            set_editing_id.set(None);
+        }
+    });
+
     let begin_edit = move |id: u64, current: String| {
         set_edit_name.set(current);
         set_editing_id.set(Some(id));
@@ -348,6 +374,7 @@ pub fn TasksPanel(
                                         <input
                                             class="task-edit-input"
                                             type="text"
+                                            node_ref=input_ref
                                             prop:value=move || edit_name.get()
                                             on:input=move |ev: Event| {
                                                 if let Some(v) = input_value(&ev) {
