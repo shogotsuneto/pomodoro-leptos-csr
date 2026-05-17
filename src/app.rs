@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
 
+use crate::history::HistoryPanel;
 use crate::settings_panel::SettingsPanel;
 use crate::storage::indexeddb::IndexedDbStorage;
 use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings};
@@ -23,6 +24,7 @@ type ActiveRef = StoredValue<Option<ActiveSession>, LocalStorage>;
 enum DrawerKind {
     Settings,
     Tasks,
+    History,
 }
 
 /// UI write/read signals bundled together for the async helpers.
@@ -346,21 +348,32 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class="top-bar">
+            // Glyphs are split into their own span so we can bump only the
+            // icon up a notch (text-font glyphs look small next to a label
+            // at the same size). VS-15 (U+FE0E) on every glyph forces text
+            // (monochrome) presentation, matched by `font-variant-emoji:
+            // text` on the button for browsers that honor the newer
+            // property.
+            <button
+                class="icon-btn"
+                on:click=move |_| set_drawer.set(Some(DrawerKind::History))
+            >
+                <span class="icon-btn-glyph">"⏲\u{FE0E}"</span>
+                <span class="icon-btn-label">"History"</span>
+            </button>
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Tasks))
-                aria-label="Tasks"
-                title="Tasks"
             >
-                "≡"
+                <span class="icon-btn-glyph">"☑\u{FE0E}"</span>
+                <span class="icon-btn-label">"Tasks"</span>
             </button>
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Settings))
-                aria-label="Settings"
-                title="Settings"
             >
-                "⚙"
+                <span class="icon-btn-glyph">"⚙\u{FE0E}"</span>
+                <span class="icon-btn-label">"Settings"</span>
             </button>
         </div>
         <div class="container">
@@ -402,6 +415,12 @@ pub fn App() -> impl IntoView {
             tasks=tasks
             set_tasks=set_tasks
             storage=storage
+        />
+        <HistoryPanel
+            is_open=Signal::derive(move || drawer.get() == Some(DrawerKind::History))
+            on_close=Callback::new(move |_| set_drawer.set(None))
+            storage=storage
+            tasks=tasks
         />
     }
 }

@@ -298,6 +298,32 @@ impl IndexedDbStorage {
         Ok(())
     }
 
+    /// Returns the most recent terminated (completed OR abandoned) sessions,
+    /// ordered by `started_at_ms` descending and capped at `limit`. Active
+    /// sessions are excluded — they're shown live on the main screen.
+    pub async fn list_session_history(
+        &self,
+        limit: usize,
+    ) -> StorageResult<Vec<(u64, SessionRecord)>> {
+        let tx = self
+            .db
+            .transaction(&[STORE_SESSIONS], TransactionMode::ReadOnly)?;
+        let store = tx.object_store(STORE_SESSIONS)?;
+        let keys = store.get_all_keys(None, None)?.await?;
+        let values = store.get_all(None, None)?.await?;
+        let mut entries: Vec<(u64, SessionRecord)> = Vec::with_capacity(keys.len());
+        for (k, v) in keys.into_iter().zip(values) {
+            let id = k.as_f64().unwrap_or(0.0) as u64;
+            let rec: SessionRecord = from_value(v)?;
+            if rec.completed_at_ms.is_some() || rec.abandoned_at_ms.is_some() {
+                entries.push((id, rec));
+            }
+        }
+        entries.sort_by(|a, b| b.1.started_at_ms.cmp(&a.1.started_at_ms));
+        entries.truncate(limit);
+        Ok(entries)
+    }
+
     /// Returns `(total, since)` counts of naturally-completed Work sessions.
     /// `since` is the subset whose `completed_at_ms >= since_ms` — pass the
     /// start of today's local midnight to get a "today" count. Single scan

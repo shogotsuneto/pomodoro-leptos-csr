@@ -73,16 +73,27 @@
       z-index: 5;
     }
     .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
       background: transparent;
       border: none;
       color: #aaa;
-      font-size: 1.5rem;
+      font-size: 0.85rem;
       cursor: pointer;
-      padding: 0.25rem 0.5rem;
+      padding: 0.4rem 0.7rem;
       border-radius: 4px;
       transition: color 0.15s, background 0.15s;
+      /* Force text (monochrome) presentation for dual-style glyphs like
+         ⏱ / ☑, in browsers that support the property. The string itself
+         appends VS-15 to each glyph as a belt-and-suspenders fallback. */
+      font-variant-emoji: text;
     }
     .icon-btn:hover { color: #eee; background: #ffffff14; }
+    .icon-btn-glyph {
+      font-size: 1.2em;
+      line-height: 1;
+    }
 
     /* --- Task picker (main screen) ------------------------------------ */
     .task-picker {
@@ -237,6 +248,27 @@
       font-size: 0.75rem;
       border: 1px solid #2a2a4a;
       border-radius: 4px;
+    }
+
+    /* --- History drawer ----------------------------------------------- */
+    .history-list { list-style: none; }
+    .history-item {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+      padding: 0.7rem 0;
+      border-bottom: 1px solid #2a2a4a;
+    }
+    .history-task {
+      color: #eee;
+      font-size: 0.9rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-meta {
+      font-size: 0.75rem;
+      color: #888;
     }
 
     .drawer-backdrop {
