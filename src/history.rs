@@ -1,5 +1,6 @@
 // Session history drawer. Loads recent terminated sessions from
-// IndexedDB lazily when the drawer opens. Task names are resolved
+// IndexedDB lazily when the drawer opens, then filters down to
+// completed Work sessions for display. Task names are resolved
 // reactively against the live `tasks` signal so a rename shows up
 // immediately in the history list too.
 
@@ -30,7 +31,7 @@ const HISTORY_LIMIT: usize = 100;
 /// here line up with the main-screen counter.
 fn format_when(started_at_ms: i64) -> String {
     let d = js_sys::Date::new(&JsValue::from_f64(started_at_ms as f64));
-    let time_str = format!("{:02}:{:02}", d.get_hours() as u32, d.get_minutes() as u32);
+    let time_str = format_time_of_day_inner(&d);
     let today_start = start_of_today_ms();
     let day_ms: i64 = 24 * 60 * 60 * 1000;
     if started_at_ms >= today_start {
@@ -42,6 +43,15 @@ fn format_when(started_at_ms: i64) -> String {
         let day = d.get_date() as u32;
         format!("{} {} {}", MONTHS[month_idx], day, time_str)
     }
+}
+
+fn format_time_of_day(ms: i64) -> String {
+    let d = js_sys::Date::new(&JsValue::from_f64(ms as f64));
+    format_time_of_day_inner(&d)
+}
+
+fn format_time_of_day_inner(d: &js_sys::Date) -> String {
+    format!("{:02}:{:02}", d.get_hours() as u32, d.get_minutes() as u32)
 }
 
 fn format_duration(secs: u32) -> String {
@@ -78,27 +88,35 @@ pub fn HistoryPanel(
         }
     });
 
+    // History is intentionally minimal — only completed Work sessions, since
+    // those are what users actually want to look back at. Break sessions and
+    // abandoned attempts are noise here.
+    let visible_entries = move || {
+        entries
+            .get()
+            .into_iter()
+            .filter(|(_, rec)| {
+                matches!(rec.phase, PhaseKind::Work) && rec.completed_at_ms.is_some()
+            })
+            .collect::<Vec<_>>()
+    };
+
     view! {
         <DrawerShell is_open=is_open on_close=on_close title="History">
             <Show
-                when=move || !entries.get().is_empty()
+                when=move || !visible_entries().is_empty()
                 fallback=|| view! { <p class="task-empty">"No sessions yet."</p> }
             >
                 <ul class="history-list">
                     <For
-                        each=move || entries.get()
+                        each=visible_entries
                         key=|(id, _)| *id
                         children=move |(_id, rec)| {
-                            let phase = rec.phase;
-                            let phase_label = match phase {
-                                PhaseKind::Work => "Work",
-                                PhaseKind::Break => "Break",
-                            };
-                            let phase_class = match phase {
-                                PhaseKind::Work => "history-phase work",
-                                PhaseKind::Break => "history-phase break",
-                            };
-                            let when = format_when(rec.started_at_ms);
+                            let started = format_when(rec.started_at_ms);
+                            let ended = rec
+                                .completed_at_ms
+                                .map(format_time_of_day)
+                                .unwrap_or_default();
                             let dur = format_duration(rec.duration_secs);
                             let task_id = rec.task_id;
                             let task_name = move || {
@@ -110,23 +128,16 @@ pub fn HistoryPanel(
                                         .map(|r| r.name.get())
                                 })
                             };
-                            let (status_text, status_class) = if rec.completed_at_ms.is_some() {
-                                ("✓", "history-status completed")
-                            } else {
-                                ("⊘", "history-status abandoned")
-                            };
                             view! {
                                 <li class="history-item">
-                                    <div class="history-head">
-                                        <span class=phase_class>{phase_label}</span>
-                                        <Show when=move || task_name().is_some()>
-                                            <span class="history-task">
-                                                {move || task_name().unwrap_or_default()}
-                                            </span>
-                                        </Show>
-                                        <span class=status_class>{status_text}</span>
+                                    <Show when=move || task_name().is_some()>
+                                        <div class="history-task">
+                                            {move || task_name().unwrap_or_default()}
+                                        </div>
+                                    </Show>
+                                    <div class="history-meta">
+                                        {started} " – " {ended} " · " {dur}
                                     </div>
-                                    <div class="history-meta">{when} " · " {dur}</div>
                                 </li>
                             }
                         }
