@@ -348,23 +348,28 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class="top-bar">
+            // Each icon has VS-15 (U+FE0E) appended to force text
+            // presentation, so a dual-presentation glyph like ⏱ doesn't
+            // render as a colored emoji on platforms that default to one.
+            // Combined with `font-variant-emoji: text` in CSS for browser
+            // coverage that respects the newer property too.
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::History))
             >
-                "🕘 History"
+                "⏱\u{FE0E} History"
             </button>
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Tasks))
             >
-                "☑ Tasks"
+                "☑\u{FE0E} Tasks"
             </button>
             <button
                 class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Settings))
             >
-                "⚙ Settings"
+                "⚙\u{FE0E} Settings"
             </button>
         </div>
         <div class="container">

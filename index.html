@@ -84,6 +84,10 @@
       padding: 0.4rem 0.7rem;
       border-radius: 4px;
       transition: color 0.15s, background 0.15s;
+      /* Force text (monochrome) presentation for dual-style glyphs like
+         ⏱ / ☑, in browsers that support the property. The string itself
+         appends VS-15 to each glyph as a belt-and-suspenders fallback. */
+      font-variant-emoji: text;
     }
     .icon-btn:hover { color: #eee; background: #ffffff14; }
 
