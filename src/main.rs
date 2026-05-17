@@ -1,4 +1,5 @@
 mod app;
+mod history;
 mod settings_panel;
 mod storage;
 mod tasks;

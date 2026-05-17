@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use leptos::reactive::owner::LocalStorage;
 use leptos::task::spawn_local;
 
+use crate::history::HistoryPanel;
 use crate::settings_panel::SettingsPanel;
 use crate::storage::indexeddb::IndexedDbStorage;
 use crate::storage::{ActiveSession, PhaseKind, SessionRecord, Settings};
@@ -23,6 +24,7 @@ type ActiveRef = StoredValue<Option<ActiveSession>, LocalStorage>;
 enum DrawerKind {
     Settings,
     Tasks,
+    History,
 }
 
 /// UI write/read signals bundled together for the async helpers.
@@ -348,6 +350,14 @@ pub fn App() -> impl IntoView {
         <div class="top-bar">
             <button
                 class="icon-btn"
+                on:click=move |_| set_drawer.set(Some(DrawerKind::History))
+                aria-label="History"
+                title="History"
+            >
+                "↺"
+            </button>
+            <button
+                class="icon-btn"
                 on:click=move |_| set_drawer.set(Some(DrawerKind::Tasks))
                 aria-label="Tasks"
                 title="Tasks"
@@ -402,6 +412,12 @@ pub fn App() -> impl IntoView {
             tasks=tasks
             set_tasks=set_tasks
             storage=storage
+        />
+        <HistoryPanel
+            is_open=Signal::derive(move || drawer.get() == Some(DrawerKind::History))
+            on_close=Callback::new(move |_| set_drawer.set(None))
+            storage=storage
+            tasks=tasks
         />
     }
 }
